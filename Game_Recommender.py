@@ -20,20 +20,13 @@ played_games = set()
 genre_map = {
     "Action": "action",
     "Adventure": "adventure",
-    "Card & Board": "card",
-    "Fighting": "fighting",
     "Horror": "horror",
-    "Platformer": "platformer",
     "Puzzle": "puzzle",
-    "Racing": "racing",
-    "Rhythm & Music": "music",
     "Role-Playing(RPG)": "role-playing-games",
-    "Shooter": "shooter",
+    "Shooter/FPS": "shooter",
     "Simulation": "simulation",
     "Sports": "sports",
-    "Strategy": "strategy",
-    "Survival": "survival",
-    "Party & Social": "family"
+    "Strategy": "strategy"
 }
 
 # Same idea — maps friendly platform names to the numeric IDs the RAWG API uses to filter by platform
@@ -45,6 +38,23 @@ platform_map = {
     "Xbox Series S": "186",
     "Xbox Series X": "186",
     "Nintendo Switch": "7"
+}
+
+perspective_map = {
+    "First Person": "first-person",
+    "Isometric": "isometric",
+    "Side Scrolling/2D": "2d",
+    "Third Person": "third-person",
+    "Top-Down": "top-down",
+    "Virtual Reality": "vr"
+}
+
+difficulty_map = {
+    "Casual": "casual",
+    "Easy": "relaxing",
+    "Moderate": "",
+    "Hard": "difficult",
+    "Brutal": "hardcore"
 }
 
 def save_played():
@@ -79,7 +89,7 @@ def clear_played_games():
 def get_recommendation():   # this function runs when the user clicks "Search"
     global results_frame
 
-    if genre_var.get() == "select Genre" or platform_var.get() == "Select Platform":
+    if genre_var.get() == "Select Genre" or platform_var.get() == "Select Platform":
         for widget in results_frame.winfo_children():
             widget.destroy()
 
@@ -87,14 +97,22 @@ def get_recommendation():   # this function runs when the user clicks "Search"
         return
 
     genre = genre_map.get(genre_var.get())          # .get() on the StringVar reads the current dropdown value, then looks it up in the dict
-    perspective = perspective_var.get()             # reads the selected perspective (e.g. "First Person")
+    selected_perspective = perspective_var.get()
+    perspective = perspective_map.get(selected_perspective, "") if selected_perspective != "Select View Style" else ""             # reads the selected perspective (e.g. "First Person")
     difficulty = difficulty_var.get()               # reads the selected difficulty
+    difficulty_tag = difficulty_map.get(difficulty, "")
     platform = platform_map.get(platform_var.get()) # same pattern — reads the platform dropdown and translates it to an API ID
     keyword = keyword_entry.get()                   # reads whatever the user typed in the text box
 
-    # builds the full API URL with all the filters embedded as query parameters
-    # perspective, difficulty, and keyword all go into "search" — the API treats them as freetext
-    url = f"https://api.rawg.io/api/games?key={api_key}&genres={genre}&platforms={platform}&search={perspective} {difficulty} {keyword}&page_size=3"
+    tags = []
+    if perspective:
+        tags.append(perspective)
+
+    if difficulty_tag:
+        tags.append(difficulty_tag)
+
+    tags_param = f"&tags={','.join(tags)}" if tags else ""
+    url = f"https://api.rawg.io/api/games?key={api_key}&genres={genre}&platforms={platform}{tags_param}&search={keyword}&page_size=10"
     
     response = requests.get(url)   # sends the GET request to the RAWG API
     data = response.json()     # parses the JSON response into a Python dictionary
@@ -105,19 +123,15 @@ def get_recommendation():   # this function runs when the user clicks "Search"
 
     games = data["results"]                          # the list of game objects returned by the API
 
-    filtered_games = []
-
-    for game in games:
-        if game['name'] not in played_games:
-            filtered_games.append(game)
+    filtered_games = [game for game in games if game['name'] not in played_games]
 
     if not filtered_games:
         tk.Label(results_frame, text="You've played all these! Try different filters.", bg="darkorange", fg="black").pack()
         return
 
-    for i, game in enumerate(filtered_games[:3]):   # loops over up to the first 3 results; enumerate gives you both the index (i) and the item
+    for game in filtered_games[:3]:   # loops over up to the first 3 results; enumerate gives you both the index (i) and the item
         
-        rating = game['rating']            # pulls the rating value out of the game object
+        rating = game.get('rating', 0)            # pulls the rating value out of the game object
         if rating == 0:
             rating_display = "Not yet rated"      # handles the case where a game hasn't been rated yet
         else:
@@ -160,12 +174,12 @@ dropdowns_frame.pack(pady=10)
 # StringVar is a special tkinter variable that a widget can "watch" — when it changes, the widget updates automatically
 genre_var = tk.StringVar()
 genre_var.set("Select Genre")   # sets the default displayed value
-genre_dropdown = tk.OptionMenu(dropdowns_frame, genre_var, "Action", "Adventure", "Card & Board", "Fighting", "Horror", "Platformer", "Puzzle", "Racing", "Rhythm & Music", "Role-Playing(RPG)", "Shooter", "Simulation", "Sports", "Strategy", "Survival", "Party & Social")
+genre_dropdown = tk.OptionMenu(dropdowns_frame, genre_var, "Action", "Adventure", "Horror", "Puzzle", "Role-Playing(RPG)", "Shooter/FPS", "Simulation", "Sports", "Strategy")
 genre_dropdown.grid(row=0, column=0, padx=10, pady=10)
 
 perspective_var = tk.StringVar()
 perspective_var.set("Select View Style")
-perspective_dropdown = tk.OptionMenu(dropdowns_frame, perspective_var, "2.5D", "First Person", "First Person VR", "Fixed Camera", "Isometric", "Over-The-Shoulder", "Point-And-Click", "Scrolling Shooter/Shmup", "Side Scrolling/2D", "Tactical/Strategy View", "Text-Based", "Third Person", "Top-Down", "Visual Novel")
+perspective_dropdown = tk.OptionMenu(dropdowns_frame, perspective_var, "First Person", "Isometric", "Side Scrolling/2D", "Third Person", "Top-Down", "Virtual Reality")
 perspective_dropdown.grid(row=0, column=1, padx=10, pady=10)
 
 difficulty_var = tk.StringVar()

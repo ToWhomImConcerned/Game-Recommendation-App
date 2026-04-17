@@ -1,0 +1,1 @@
+improve UI, add undo system, add smarter recommendations, make it scrollable, add more info details option to each game, make window match screen size.
