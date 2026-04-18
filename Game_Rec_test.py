@@ -1,40 +1,45 @@
 import tkinter as tk          # tkinter is Python's built-in GUI library — lets you build windows, buttons, labels, etc.
-import requests               # lets you make HTTP requests (like calling an API)
+import requests               # lets you make HTTP requests (like calling a web API)
 from dotenv import load_dotenv  # loads variables from a .env file so you can keep secrets out of your code
 import os                     # lets you access environment variables and interact with the operating system
-import random                 # gives you tools for randomness (used to randomly pick a greeting here)
-from tkinter import ttk       # an extended/themed widget set that comes with tkinter (imported but not used here yet)
-import json
-from tkinter import messagebox
-import webbrowser
-import re
+import random                 # gives you tools for randomness (used here to randomly pick a greeting)
+from tkinter import ttk       # extended/themed widget set from tkinter — imported but not actively used yet
+import json                   # lets you convert Python objects to/from JSON (used to save/load data files)
+from tkinter import messagebox  # provides pop-up dialog boxes for warnings, confirmations, and info messages
+import webbrowser             # lets you open URLs in the user's default browser
+import re                     # gives you tools for regular expressions (used here to strip HTML tags)
 
+# __file__ is the path to this script — os.path.abspath resolves it to a full absolute path,
+# and os.path.dirname strips the filename, leaving just the folder it lives in.
+# Storing BASE_DIR means all our data files save next to this script no matter where it's run from.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FILE_PATH = os.path.join(BASE_DIR, "played_games.json")
+FILE_PATH = os.path.join(BASE_DIR, "played_games.json")   # where we persist the "played" list between sessions
 
-load_dotenv()                         # reads your .env file and loads its contents into the environment
-api_key = os.getenv("RAWG_KEY")       # grabs your secret API key from the environment (not hardcoded, which is safer)
+load_dotenv()                         # reads your .env file and loads its key=value pairs into the environment
+api_key = os.getenv("RAWG_KEY")       # grabs the API key from the environment (safer than hardcoding it in the source)
 
+# Sets are like lists but automatically deduplicate — perfect for tracking game names where duplicates are meaningless.
+# They're also faster than lists for "is this item in here?" checks, which we do a lot.
 played_games = set()
 
 favorites = set()
 FAVORITES_PATH = os.path.join(BASE_DIR, "favorites.json")
 
-# A dictionary that maps readable genre names to the API's expected slug values
-# When the user picks "Role-Playing(RPG)", the API actually needs "role-playing-games" — this handles that translation
+# Maps the human-readable genre names shown in the dropdown to the "slug" values the RAWG API expects.
+# Some entries combine multiple slugs with commas — RAWG accepts that and treats it as an OR filter.
 genre_map = {
     "Action": "action",
     "Adventure": "adventure",
-    "Horror": "horror",
+    "Family": "family,card,board-games,educational",
     "Puzzle": "puzzle",
-    "Role-Playing(RPG)": "role-playing-games",
+    "Role-Playing(RPG)": "role-playing-games-rpg",
     "Shooter/FPS": "shooter",
     "Simulation": "simulation",
-    "Sports": "sports",
+    "Sports & Racing": "sports,racing,fighting",
     "Strategy": "strategy"
 }
 
-# Same idea — maps friendly platform names to the numeric IDs the RAWG API uses to filter by platform
+# RAWG identifies platforms by numeric ID, not by name — this maps our dropdown labels to those IDs.
 platform_map = {
     "PC": "4",
     "Playstation 4": "18",
@@ -45,6 +50,7 @@ platform_map = {
     "Nintendo Switch": "7"
 }
 
+# RAWG uses "tags" to filter by things like camera perspective. These are the tag slugs for each option.
 perspective_map = {
     "First Person": "first-person",
     "Isometric": "isometric",
@@ -54,8 +60,9 @@ perspective_map = {
     "Virtual Reality": "vr"
 }
 
+# Maps difficulty labels to RAWG tag slugs. "Moderate" maps to an empty string,
+# which means we simply won't add a difficulty tag for that choice — it acts as a wildcard.
 difficulty_map = {
-    "Casual": "casual",
     "Easy": "relaxing",
     "Moderate": "",
     "Hard": "difficult",
@@ -63,14 +70,21 @@ difficulty_map = {
 }
 
 def strip_html(text):
+    # RAWG descriptions often contain raw HTML tags like <p>, <br>, <strong>, etc.
+    # This regex matches anything between < and > (non-greedy) and replaces it with nothing,
+    # leaving just the plain text content.
     clean = re.sub(r'<[^>]+>', '', text)
     return clean
 
 def show_details(game_id):
+    # Fetches detailed info for a single game from RAWG using its unique ID,
+    # then displays it in a new pop-up window (Toplevel) on top of the main window.
     url = f"https://api.rawg.io/api/games/{game_id}?key={api_key}"
     response = requests.get(url)
     data = response.json()
 
+    # tk.Toplevel creates a secondary window that stays on top of the main one.
+    # It's independent — closing it doesn't close the main window.
     win = tk.Toplevel(window)
     win.title(data.get('name', 'Game Details'))
     win.geometry("500x400")
@@ -82,25 +96,32 @@ def show_details(game_id):
     details_frame = tk.Frame(win, bg="darkorange")
     details_frame.pack(padx=20, pady=5, fill="x")
 
+    # add_row is a helper defined inside show_details so it can close over (share) details_frame and add_row.counter.
+    # Each call adds a label-value pair to the next row of the grid.
     def add_row(label, value):
         tk.Label(details_frame, text=f"{label}:", font=("Helvetica", 10, "bold"),
                  bg="darkorange", anchor="w").grid(row=add_row.counter, column=0, sticky="w", pady=3)
         tk.Label(details_frame, text=value, font=("Helvetica", 10),
                  bg="darkorange", anchor="w", wraplength=350).grid(row=add_row.counter, column=1, sticky="w", padx=10)
-        add_row.counter +=1
+        add_row.counter += 1
 
+    # Python functions don't have static local variables, but we can attach attributes directly to the function object.
+    # add_row.counter acts like a persistent row counter that increments with each call.
     add_row.counter = 0
 
-    release_date = data.get('released', 'Unknown')
-    year = release_date[:4] if release_date != 'Unknown' else 'Unknown'
+    release_date = data.get('released') or 'Unknown'
+    year = release_date[:4] if release_date != 'Unknown' else 'Unknown'  # slice the 4-digit year from "YYYY-MM-DD"
 
     rating = data.get('rating', 0)
     rating_display = f"{rating} / 5.0" if rating else "Not yet rated"
 
+    # data.get('genres', []) safely returns an empty list if 'genres' is missing.
+    # The list comprehension extracts each genre's name, then ", ".join() combines them into one string.
     genres = ", ".join([g['name'] for g in data.get('genres', [])])
     developers = ", ".join([d['name'] for d in data.get('developers', [])])
 
     description = strip_html(data.get('description', ''))
+    # Truncate the description to ~350 chars, then cut back to the last full word to avoid splitting mid-word.
     snippet = description[:350].rsplit(' ', 1)[0] + "..." if len(description) > 350 else description
 
     add_row("Released", year)
@@ -109,37 +130,49 @@ def show_details(game_id):
     add_row("Developers", developers or "Unknown")
     add_row("Description", snippet)
 
+    # Not every game has an official website — only show the link if RAWG returned one.
     website = data.get('website', '')
     if website:
+        # fg="blue" and cursor="hand2" give it the look and feel of a hyperlink.
+        # The <Button-1> event fires when the user left-clicks the label.
         link = tk.Label(win, text="Official Website", fg="blue", bg="darkorange",
                         cursor="hand2", font=("Helvetica", 10, "underline"))
         link.pack(pady=10)
         link.bind("<Button-1>", lambda e: webbrowser.open(website))
 
 def save_played():
+    # Converts the set to a list before writing — JSON doesn't support sets natively.
+    # "w" mode creates the file if it doesn't exist, or overwrites it if it does.
     with open(FILE_PATH, "w") as f:
         json.dump(list(played_games), f)
 
 def load_played():
+    # global tells Python we want to reassign the module-level played_games variable,
+    # not create a new local one that shadows it.
     global played_games
     try:
         with open(FILE_PATH, "r") as f:
+            # json.load reads the file and returns a list; we convert it back to a set
+            # so duplicate-checking stays fast throughout the rest of the program.
             played_games = set(json.load(f))
     except FileNotFoundError:
+        # First run — no save file yet, so we just start with an empty set.
         played_games = set()
 
-load_played()
+load_played()  # run once at startup so the set is populated before the UI appears
 
 def clear_played_games():
     global played_games
 
+    # messagebox.askyesno shows a Yes/No dialog — it returns True if the user clicks Yes.
+    # Asking for confirmation before destructive actions is good UX.
     confirm = messagebox.askyesno("Confirm reset", "Are you sure you want to clear all played games?")
     if not confirm:
         return
 
-    played_games.clear()
+    played_games.clear()  # empties the in-memory set immediately
 
-    # delete the file if it exists
+    # Also delete the file so the cleared state persists after the app is closed and reopened.
     if os.path.exists(FILE_PATH):
         os.remove(FILE_PATH)
 
@@ -157,9 +190,10 @@ def load_favorites():
     except FileNotFoundError:
         favorites = set()
 
-load_favorites()
+load_favorites()  # run once at startup, same pattern as load_played()
 
 def show_favorites():
+    # Opens a separate window listing all favorited game names.
     win = tk.Toplevel(window)
     win.title("My Favorites")
     win.geometry("400x300")
@@ -168,10 +202,13 @@ def show_favorites():
     tk.Label(win, text="My favorite games", font=("helvetica", 16, "bold"),
              bg="darkorange").pack(pady=10)
     
+    # content_frame holds the list of names and gets rebuilt from scratch by refresh()
+    # whenever favorites change, keeping the displayed list in sync with the data.
     content_frame = tk.Frame(win, bg="darkorange")
     content_frame.pack()
 
     def refresh():
+        # Destroy all existing child widgets so we can redraw from the current state of favorites.
         for widget in content_frame.winfo_children():
             widget.destroy()
 
@@ -184,6 +221,7 @@ def show_favorites():
     def clear_favorites():
         global favorites
 
+        # parent=win anchors the dialog to the favorites window instead of the main window.
         confirm = messagebox.askyesno("confirm reset", "Are you sure you want to clear all favorites?", parent=win)
         if not confirm:
             return
@@ -193,54 +231,79 @@ def show_favorites():
         if os.path.exists(FAVORITES_PATH):
             os.remove(FAVORITES_PATH)
 
-        refresh()
+        refresh()  # redraw the list immediately so the window shows "No favorites yet!"
 
         messagebox.showinfo("Reset", "Favorites cleared!", parent=win)
     
     tk.Button(win, text="Clear Favorites", command=clear_favorites, fg="white", bg="red").pack(pady=5)
 
-    refresh()
+    refresh()  # draw the initial list when the window first opens
 
-def get_recommendation():   # this function runs when the user clicks "Search"
+def get_recommendation():
+    # This is the main search function — it runs when the user clicks "Search" or hits Enter.
+    # It builds a RAWG API URL from the current dropdown selections, fetches results,
+    # filters out already-played games, and renders up to 3 results in the results frame.
     global results_frame
 
+    # Clear out any previous results before drawing new ones.
     for widget in results_frame.winfo_children():
         widget.destroy()
 
+    # Genre and platform are required — the API won't return useful results without them.
     if genre_var.get() == "Select Genre" or platform_var.get() == "Select Platform":
-
         messagebox.showwarning("Missing info", "Please select at least a genre and platform.")
         return
 
-    genre = genre_map.get(genre_var.get())          # .get() on the StringVar reads the current dropdown value, then looks it up in the dict
-    selected_perspective = perspective_var.get()
-    perspective = perspective_map.get(selected_perspective, "") if selected_perspective != "Select View Style" else ""             # reads the selected perspective (e.g. "First Person")
-    difficulty = difficulty_var.get()               # reads the selected difficulty
-    difficulty_tag = difficulty_map.get(difficulty, "")
-    platform = platform_map.get(platform_var.get()) # same pattern — reads the platform dropdown and translates it to an API ID
-    keyword = keyword_entry.get()                   # reads whatever the user typed in the text box
+    # genre_overrides holds the primary genre slug(s) for the genres= param.
+    # tag_list holds extra refinements (perspective, difficulty) that go in the tags= param.
+    genre_overrides = []
+    tag_list = []
 
-    tags = []
-    if perspective:
-        tags.append(perspective)
+    # Horror isn't a RAWG genre — it's actually a tag. We fake it by using "action" as the genre
+    # and adding "horror" to tags, which gets us horror action games as a reasonable approximation.
+    if genre_var.get() == "Horror":
+        genre_overrides.append("action")
+        tag_list.append("horror")
+    else:
+        genre_overrides.append(genre_map.get(genre_var.get(), "action"))
 
-    if difficulty_tag:
-        tags.append(difficulty_tag)
+    # Side Scrolling/2D maps better to the "platformer" genre than to a perspective tag.
+    if perspective_var.get() == "Side Scrolling/2D":
+        genre_overrides.append("platformer")
+    else:
+        perspective = perspective_map.get(perspective_var.get(), "")
+        # Only add the tag if the user actually picked something (not the default placeholder).
+        if perspective and perspective_var.get() != "Select View Style":
+            tag_list.append(perspective)
 
-    tags_param = f"&tags={','.join(tags)}" if tags else ""
+    # Casual doesn't have a slug in difficulty_map because it lives outside the "difficulty" concept —
+    # it's handled separately here and appended directly as a tag.
+    if difficulty_var.get() == "Casual":
+        tag_list.append("casual")
+    else:
+        difficulty_tag = difficulty_map.get(difficulty_var.get(), "")
+        if difficulty_tag:  # skip "Moderate" since its value is an empty string
+            tag_list.append(difficulty_tag)
+
+    genre = ",".join(genre_overrides)       # RAWG accepts multiple genres as a comma-separated string
+    platform = platform_map.get(platform_var.get())
+    keyword = keyword_entry.get()           # whatever the user typed in the free-text box (can be empty)
+    tags_param = f"&tags={','.join(tag_list)}" if tag_list else ""  # only include the tags param if we have tags
     url = f"https://api.rawg.io/api/games?key={api_key}&genres={genre}&platforms={platform}{tags_param}&search={keyword}&page_size=10"
-    
+
     response = requests.get(url)   # sends the GET request to the RAWG API
-    data = response.json()     # parses the JSON response into a Python dictionary
+    data = response.json()         # parses the JSON response body into a Python dictionary
 
-    if not data["results"]:                                       # if the results list is empty, no games matched
-        msg = tk.Label(results_frame, text="No games found! Try different selections.", bg="darkorange", fg="black")  # updates the label text with an error message
+    if not data["results"]:
+        # Show a temporary error message that auto-destroys itself after 3 seconds.
+        msg = tk.Label(results_frame, text="No games found! Try different selections.", bg="darkorange", fg="black")
         msg.pack()
-        window.after(3000, msg.destroy)
-        return                                                      # exits the function early so nothing else runs
+        window.after(3000, msg.destroy)  # window.after(ms, callback) schedules a call after a delay
+        return
 
-    games = data["results"]                          # the list of game objects returned by the API
+    games = data["results"]   # the list of game objects returned by the API
 
+    # Remove any games the user has already marked as played, so we only surface new suggestions.
     filtered_games = [game for game in games if game['name'] not in played_games]
 
     if not filtered_games:
@@ -249,66 +312,81 @@ def get_recommendation():   # this function runs when the user clicks "Search"
         window.after(3000, msg.destroy)
         return
 
-    for game in filtered_games[:3]:   # loops over up to the first 3 results; enumerate gives you both the index (i) and the item
+    # Show at most 3 results — enough variety without overwhelming the UI.
+    for game in filtered_games[:3]:
 
+        # Each result gets its own frame so the rows stay visually grouped and independently laid out.
         game_frame = tk.Frame(results_frame, bg="darkorange")
         game_frame.pack(fill="x", pady=5)
 
-        game_label = tk.Label(game_frame,
-                              text=game['name'],
-                              bg="darkorange",
-                              fg="black",
-                              font=("Helvetica", 12))
-        game_label.grid(row=0, column=0, padx=10)
+        top_row = tk.Frame(game_frame, bg="darkorange")   # holds the game name and favorite button
+        top_row.pack()
 
-        btn = tk.Button(game_frame,
-                        text="Mark as Played",
-                        command=lambda name=game['name']: mark_as_played(name))
-        btn.grid(row=0, column=1, padx=10)
+        bottom_row = tk.Frame(game_frame, bg="darkorange")  # holds the action buttons
+        bottom_row.pack()
 
+        game_label = tk.Label(top_row, text=game['name'], bg="darkorange",
+                            fg="black", font=("Helvetica", 13, "bold"))
+        game_label.pack(side="left", padx=10)
+
+        # Show a filled heart if already favorited, hollow if not.
         fav_text = "♥" if game['name'] in favorites else "♡"
-        fav_btn = tk.Button(game_frame, text=fav_text, font=("Helvetica", 14),
+        fav_btn = tk.Button(top_row, text=fav_text, font=("Helvetica", 14),
                             bg="darkorange", relief="flat")
+        # The lambda captures game['name'] and fav_btn by name at definition time.
+        # Without "name=game['name']", all lambdas in the loop would share the same (last) value of game['name'].
         fav_btn.config(command=lambda name=game['name'], b=fav_btn: toggle_favorite(name, b))
-        fav_btn.grid(row=0, column=2, padx=5)
+        fav_btn.pack(side="left", padx=5)
 
-        details_btn = tk.Button(game_frame, text="More Details",
+        btn = tk.Button(bottom_row, text="Mark as Played",
+                        command=lambda name=game['name']: mark_as_played(name))
+        btn.pack(side="left", padx=10)
+
+        details_btn = tk.Button(bottom_row, text="More Details",
                                 command=lambda gid=game['id']: show_details(gid))
-        details_btn.grid(row=1, column=0, columnspan=3, pady=5)
+        details_btn.pack(side="left", padx=10)
 
 def mark_as_played(game_name):
+    # Adds the game to the in-memory set, persists it to disk, then refreshes the search results
+    # so the newly played game disappears from the list without the user having to re-search.
     played_games.add(game_name)
     save_played()
-    get_recommendation() # refresh UI
+    get_recommendation()
 
 def toggle_favorite(game_name, btn):
+    # discard() is like remove() but won't raise an error if the item isn't in the set.
     if game_name in favorites:
         favorites.discard(game_name)
-        btn.config(text="♡")
+        btn.config(text="♡")   # update the button icon to match the new state
     else:
         favorites.add(game_name)
         btn.config(text="♥")
-    save_favorites()
+    save_favorites()   # persist the updated favorites to disk immediately
 
-# --- UI SETUP BELOW ---
-# Everything from here down builds the window and its widgets. None of it runs until window.mainloop() at the end.
 
-window = tk.Tk()                  # creates the main application window
-window.title("Game Recommender")  # sets the text in the title bar
-window.geometry("800x600")        # sets the window size in pixels (width x height)
-window.configure(bg="darkorange") # sets the background color of the window
+# ─── UI SETUP ────────────────────────────────────────────────────────────────
+# Everything below this point builds the window and its widgets.
+# None of this code produces visible output until window.mainloop() starts the event loop at the bottom.
 
-# a label that displays a random greeting at the top — random.choice picks one string from the list
+window = tk.Tk()                  # creates the main application window (there can only be one Tk() per app)
+window.title("Game Recommender")  # sets the text shown in the OS title bar
+window.geometry("800x600")        # sets the initial window size in pixels: widthxheight
+window.configure(bg="darkorange") # sets the window's background color
+
+# random.choice picks one string at random from the list each time the app opens.
 title_label = tk.Label(window, text=random.choice(["What's up! Let's find you a game!", "Welcome, looking for a new game?", "What a day for a new game!"]), font=("Helvetica", 20, "bold"), fg="black", bg="darkorange")
-title_label.pack()   # .pack() places the widget into the window (top to bottom by default)
+title_label.pack()   # .pack() places the widget in the window, stacking top to bottom by default
 
+# A container frame that holds all four dropdowns in a single horizontal row.
+# Using a frame + .grid() inside it gives us precise column control that .pack() alone can't.
 dropdowns_frame = tk.Frame(window, bg="darkorange")
 dropdowns_frame.pack(pady=10)
 
-# StringVar is a special tkinter variable that a widget can "watch" — when it changes, the widget updates automatically
+# tk.StringVar is a special observable string — OptionMenu watches it and updates automatically when it changes.
+# .set() puts a default placeholder in the dropdown before the user makes a selection.
 genre_var = tk.StringVar()
-genre_var.set("Select Genre")   # sets the default displayed value
-genre_dropdown = tk.OptionMenu(dropdowns_frame, genre_var, "Action", "Adventure", "Horror", "Puzzle", "Role-Playing(RPG)", "Shooter/FPS", "Simulation", "Sports", "Strategy")
+genre_var.set("Select Genre")
+genre_dropdown = tk.OptionMenu(dropdowns_frame, genre_var, "Action", "Adventure", "Family", "Horror", "Puzzle", "Role-Playing(RPG)", "Shooter/FPS", "Simulation", "Sports & Racing", "Strategy")
 genre_dropdown.grid(row=0, column=0, padx=10, pady=10)
 
 perspective_var = tk.StringVar()
@@ -326,23 +404,31 @@ platform_var.set("Select Platform")
 platform_dropdown = tk.OptionMenu(dropdowns_frame, platform_var, "PC", "Playstation 4", "Playstation 5", "Xbox One", "Xbox Series S", "Xbox Series X", "Nintendo Switch")
 platform_dropdown.grid(row=0, column=3, padx=10, pady=10)
 
-# a text input box where the user can type a custom keyword (e.g. "open world" or "stealth")
-keyword_entry = tk.Entry(window, width=40, fg="white", bg="black", insertbackground="white")  # insertbackground sets the cursor color
+# A free-text entry for optional keywords like "open world" or "stealth".
+# insertbackground sets the color of the blinking text cursor inside the box.
+keyword_entry = tk.Entry(window, width=40, fg="white", bg="black", insertbackground="white")
 keyword_entry.pack(pady=10)
 
-# the button that triggers get_recommendation() when clicked — command= is how you wire a function to a button
+# command= wires a function to the button — it's called with no arguments when the button is clicked.
 search_button = tk.Button(window, text="Search", command=get_recommendation, fg="white", bg="black")
 search_button.pack(pady=10)
 
-clear_button = tk.Button(window, text="Reset played games",command=clear_played_games, fg="white", bg="red")
+clear_button = tk.Button(window, text="Reset played games", command=clear_played_games, fg="white", bg="red")
 clear_button.pack(pady=5)
 
 favorites_button = tk.Button(window, text="♥ My Favorites ♥", command=show_favorites, fg="white", bg="hotpink")
 favorites_button.pack(pady=5)
 
+# results_frame is a container that get_recommendation() populates with game widgets after each search.
+# Declared at the top level so get_recommendation() can access it as a global.
 results_frame = tk.Frame(window, bg="darkorange")
 results_frame.pack(pady=20)
 
-window.bind("<Return>", lambda event: get_recommendation()) # binds the return key to the search button
+# Binds the Return/Enter key to the search function so the user doesn't have to click the button.
+# The lambda accepts the event object that tkinter passes automatically, then ignores it.
+window.bind("<Return>", lambda event: get_recommendation())
 
-window.mainloop()   # starts the event loop — this keeps the window open and listening for user interactions until it's closed
+# Starts the event loop — this hands control to tkinter, which listens for user actions
+# (clicks, keypresses, window resizes) and calls the appropriate handlers.
+# The program stays here until the window is closed.
+window.mainloop()
